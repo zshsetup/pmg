@@ -1471,7 +1471,7 @@ def test_install_from_registry(tmp_path: Path, name: str) -> None:
         # zig only runs if it finds its lib dir through the symlink
         "zig": "share/pmg/packages/zig@*/lib",
     }[name]
-    # a system copy, like patchelf on GitHub's runners, counts as external instead
+    # a system copy, like patchelf on the runners of GitHub, counts as external instead
     assert f"{name}@external " in listed or list((tmp_path / ".local").glob(expected))
 
 
