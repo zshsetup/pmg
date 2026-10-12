@@ -65,7 +65,8 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
   (`bun` by default, or `npm`) then installs the dependencies, so `deps` must provide `bun`. The
   scripts in `bin` have a node shebang, so pmg replaces them with wrappers that run them with
   `bun` (or `node` for the installer `npm`).
-- glibc hosts older than `min_glibc` get the musl asset. `platforms` limits a package to some
+- glibc hosts older than `min_glibc` get the musl asset, and Alpine hosts older than `min_alpine`
+  the packages of latest-stable. `platforms` limits a package to some
   platforms, other hosts skip it as a dependency. `platform_deps` adds dependencies for the
   platform whose asset is used, e.g. a loader for the musl build on old glibc hosts.
 - `bin` maps names in `~/.local/bin` to paths in the archive. A single top-level directory in

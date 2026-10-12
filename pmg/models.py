@@ -223,6 +223,8 @@ class Package(BaseStruct, kw_only=True):
     external: External
     min_glibc: str | None = None
     """Oldest glibc for the glibc assets; older glibc hosts get the musl assets."""
+    min_alpine: str | None = None
+    """Oldest Alpine release for apk packages; older Alpine hosts get latest-stable."""
     assets: Assets = {}
     dir: str | None = None
     """Package dir, if not $PMG_HOME/packages/<name>; @tag is appended either way."""
@@ -267,17 +269,19 @@ class Package(BaseStruct, kw_only=True):
     commands and, printed by `pmg env`, for the shell; entries that render empty are left out."""
 
     def __post_init__(self) -> None:
-        """Validates deps, `min_glibc`, and the test, and takes the download repo from the release.
+        """Validates deps, `min_glibc`, `min_alpine`, and the test, and takes the download repo.
 
         Raises:
-            ValueError: If a dependency, `min_glibc`, the test, or the download repo is invalid.
+            ValueError: If a dependency, `min_glibc`, `min_alpine`, the test, or the download
+                repo is invalid.
         """
         from packaging.version import Version
 
         requirements([*self.deps, *(dep for deps in self.platform_deps.values() for dep in deps)])
         check_test(self.test)
-        if self.min_glibc:
-            Version(self.min_glibc)
+        for minimum in (self.min_glibc, self.min_alpine):
+            if minimum:
+                Version(minimum)
         dl, rl = self.download, self.release
         if isinstance(dl, GitHubDownload) and not dl.repo:
             if not isinstance(rl, GitHubRelease):  # pragma: no cover
@@ -304,6 +308,13 @@ class Package(BaseStruct, kw_only=True):
         from packaging.version import Version
 
         return Version(self.min_glibc) if self.min_glibc else None
+
+    @property
+    def min_alpine_version(self) -> Version | None:
+        """Oldest Alpine release for apk packages as a version."""
+        from packaging.version import Version
+
+        return Version(self.min_alpine) if self.min_alpine else None
 
 
 TEST_VARIABLES = frozenset({"cmd", "cmds", "dir", "dirs"})

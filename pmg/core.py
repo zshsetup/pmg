@@ -655,15 +655,20 @@ async def refresh_cached(url: str) -> Path:
     return await download_file(url, path)
 
 
-def alpine_repo() -> str:
-    """Returns the URL of the main Alpine repo of the host release, or else of latest-stable."""
+def alpine_repo(min_alpine: Version | None = None) -> str:
+    """Returns the URL of the main Alpine repo of the host release, or else of latest-stable.
+
+    Hosts with a release older than `min_alpine` get latest-stable, too.
+    """
+    from packaging.version import Version
+
     mirror = os.getenv("PMG_ALPINE_MIRROR") or "https://dl-cdn.alpinelinux.org/alpine"
     release_file = Path("/etc/alpine-release")
-    release = (
-        f"v{'.'.join(release_file.read_text().split('.')[:2])}"
-        if release_file.exists()
-        else "latest-stable"
-    )
+    release = "latest-stable"
+    if release_file.exists():
+        host = ".".join(release_file.read_text().split(".")[:2])
+        if min_alpine is None or Version(host) >= min_alpine:
+            release = f"v{host}"
     machine = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
     return f"{mirror}/{release}/main/{machine}"
 
@@ -819,7 +824,7 @@ async def fetch_registry_release(pkg: Package, host: Platform) -> str:
     if isinstance(rl, CargoRelease):
         return await cargo_latest(rl.crate)
     if isinstance(rl, ApkRelease):
-        return await apk_version(alpine_repo(), rl.package)
+        return await apk_version(alpine_repo(pkg.min_alpine_version), rl.package)
     if isinstance(rl, CondaRelease):
         return (await conda_file(rl.channel, asset_name(pkg, host))).version
     if isinstance(rl, GoRelease):
@@ -898,7 +903,7 @@ async def run_download(
         # the command installs into the staging dir itself, see run_install
         return []
     if isinstance(dl, ApkDownload):
-        repo = alpine_repo()
+        repo = alpine_repo(pkg.min_alpine_version)
         release = pkg.release.package if isinstance(pkg.release, ApkRelease) else None
         versions = {
             package: tag if package == release else await apk_version(repo, package)

@@ -1403,6 +1403,36 @@ packages = ["tool", "toollib"]
     ]
 
 
+def test_min_alpine(env: Env) -> None:
+    # no host release is as new as 99.0, so the packages come from latest-stable
+    machine = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
+    repo = env.assets / "alpine" / "latest-stable" / "main" / machine
+    repo.mkdir(parents=True)
+    apkindex = tar_bytes({"APKINDEX": (b"P:tool\nV:1.0-r0\n\n", 0o644)})
+    (repo / "APKINDEX.tar.gz").write_bytes(gzip.compress(apkindex))
+    tool = apk_bytes({"usr/bin/tool": (b"#!/bin/sh\necho alpine tool\n", 0o755)})
+    (repo / "tool-1.0-r0.apk").write_bytes(tool)
+    env.write_spec(
+        "tool",
+        """min_alpine = "99.0"
+content = true
+test = "{{ cmd }}"
+keep = ["usr/bin/*"]
+links = { tool = "{{ dir }}/usr/bin/tool" }
+[external]
+[release]
+type = "apk"
+package = "tool"
+[download]
+type = "apk"
+packages = ["tool"]
+[assets]
+""",
+    )
+    env.pmg("install", "tool")
+    assert env.run_bin("tool") == "alpine tool"
+
+
 def test_conda_package(env: Env) -> None:
     sysroot = "x86_64-conda-linux-gnu/sysroot"
     payload = tar_bytes(

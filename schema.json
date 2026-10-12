@@ -135,6 +135,17 @@
           ],
           "default": null
         },
+        "min_alpine": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "assets": {
           "$ref": "#/$defs/Assets",
           "default": {}
