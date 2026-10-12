@@ -22,6 +22,12 @@
             },
             {
               "$ref": "#/$defs/CondaRelease"
+            },
+            {
+              "$ref": "#/$defs/GoRelease"
+            },
+            {
+              "$ref": "#/$defs/NpmRelease"
             }
           ],
           "discriminator": {
@@ -31,7 +37,9 @@
               "command": "#/$defs/CommandRelease",
               "static": "#/$defs/StaticRelease",
               "apk": "#/$defs/ApkRelease",
-              "conda": "#/$defs/CondaRelease"
+              "conda": "#/$defs/CondaRelease",
+              "go": "#/$defs/GoRelease",
+              "npm": "#/$defs/NpmRelease"
             }
           }
         },
@@ -51,6 +59,12 @@
             },
             {
               "$ref": "#/$defs/CondaDownload"
+            },
+            {
+              "$ref": "#/$defs/GoDownload"
+            },
+            {
+              "$ref": "#/$defs/NpmDownload"
             }
           ],
           "discriminator": {
@@ -60,7 +74,9 @@
               "url": "#/$defs/UrlDownload",
               "command": "#/$defs/CommandDownload",
               "apk": "#/$defs/ApkDownload",
-              "conda": "#/$defs/CondaDownload"
+              "conda": "#/$defs/CondaDownload",
+              "go": "#/$defs/GoDownload",
+              "npm": "#/$defs/NpmDownload"
             }
           }
         },
@@ -363,6 +379,42 @@
       ],
       "additionalProperties": false
     },
+    "GoRelease": {
+      "title": "GoRelease",
+      "description": "Stores the Go module whose latest version in the module proxy is the latest version.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "go"
+          ]
+        },
+        "module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "module"
+      ],
+      "additionalProperties": false
+    },
+    "NpmRelease": {
+      "title": "NpmRelease",
+      "description": "Marks the latest version of the asset package in the npm registry as the latest version.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "npm"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
     "GitHubDownload": {
       "title": "GitHubDownload",
       "description": "Stores the GitHub repo whose release assets are downloaded.",
@@ -470,6 +522,56 @@
       "required": [
         "type",
         "channel"
+      ],
+      "additionalProperties": false
+    },
+    "GoDownload": {
+      "title": "GoDownload",
+      "description": "Stores the Go package that `go install` builds into the bin dir.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "go"
+          ]
+        },
+        "package": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "NpmDownload": {
+      "title": "NpmDownload",
+      "description": "Stores the tool installing the dependencies of the asset package from the npm registry.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "npm"
+          ]
+        },
+        "installer": {
+          "enum": [
+            "bun",
+            "npm"
+          ],
+          "default": "bun"
+        }
+      },
+      "required": [
+        "type"
       ],
       "additionalProperties": false
     },

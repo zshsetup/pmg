@@ -53,7 +53,25 @@ class CondaRelease(BaseStruct, tag="conda", kw_only=True):
     channel: str
 
 
-Release: TypeAlias = GitHubRelease | CommandRelease | StaticRelease | ApkRelease | CondaRelease
+class GoRelease(BaseStruct, tag="go", kw_only=True):
+    """Stores the Go module whose latest version in the module proxy is the latest version."""
+
+    module: str
+
+
+class NpmRelease(BaseStruct, tag="npm", kw_only=True):
+    """Marks the latest version of the asset package in the npm registry as the latest version."""
+
+
+Release: TypeAlias = (
+    GitHubRelease
+    | CommandRelease
+    | StaticRelease
+    | ApkRelease
+    | CondaRelease
+    | GoRelease
+    | NpmRelease
+)
 
 
 class GitHubDownload(BaseStruct, tag="github", kw_only=True):
@@ -87,7 +105,29 @@ class CondaDownload(BaseStruct, tag="conda", kw_only=True):
     channel: str
 
 
-Download: TypeAlias = GitHubDownload | UrlDownload | CommandDownload | ApkDownload | CondaDownload
+class GoDownload(BaseStruct, tag="go", kw_only=True):
+    """Stores the Go package that `go install` builds into the bin dir."""
+
+    package: str | None = None
+    """Package to build, if it differs from the module of a Go release spec."""
+
+
+class NpmDownload(BaseStruct, tag="npm", kw_only=True):
+    """Stores the tool installing the dependencies of the asset package from the npm registry."""
+
+    installer: Literal["bun", "npm"] = "bun"
+    """Tool run in the unpacked package, from the PATH of the spec commands, so `bun` is a dep."""
+
+
+Download: TypeAlias = (
+    GitHubDownload
+    | UrlDownload
+    | CommandDownload
+    | ApkDownload
+    | CondaDownload
+    | GoDownload
+    | NpmDownload
+)
 
 
 class Assets(TypedDict, total=False):
@@ -227,6 +267,12 @@ class Package(BaseStruct, kw_only=True):
                     "GitHubDownload needs to specify the repo if GitHubRelease is not used"
                 )
             dl.repo = rl.repo
+        if isinstance(dl, GoDownload) and not dl.package:
+            if not isinstance(rl, GoRelease):  # pragma: no cover
+                raise ValueError("GoDownload needs to specify the package if GoRelease is not used")
+            dl.package = rl.module
+        if isinstance(dl, NpmDownload) and not self.content:  # pragma: no cover
+            raise ValueError("an npm download needs content = true, for its node_modules")
 
     @property
     def min_glibc_version(self) -> Version | None:
@@ -330,6 +376,29 @@ class GitHubAsset(msgspec.Struct, kw_only=True):
     browser_download_url: str
     digest: str | None = None
     """Checksum as "sha256:<hex>", only for assets uploaded since mid 2025."""
+
+
+class GoVersion(msgspec.Struct, kw_only=True):
+    """Stores a version of a module from the Go module proxy."""
+
+    version: str = msgspec.field(name="Version")
+
+
+class NpmDist(msgspec.Struct, kw_only=True):
+    """Stores the tarball of a version from the npm registry."""
+
+    tarball: str
+    integrity: str | None = None
+    """Subresource integrity, e.g. sha512-<base64>."""
+    shasum: str | None = None
+    """SHA-1 of the tarball in hex, for versions published without integrity."""
+
+
+class NpmVersion(msgspec.Struct, kw_only=True):
+    """Stores a version of a package from the npm registry."""
+
+    version: str
+    dist: NpmDist
 
 
 class CondaFile(msgspec.Struct, kw_only=True):

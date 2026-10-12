@@ -25,6 +25,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 # typing has override only from Python 3.12 on.
 from typing_extensions import override
@@ -51,7 +52,16 @@ if TYPE_CHECKING:
     from tqdm import tqdm
 
     from pmg.consumers import Files, GitHubApi
-    from pmg.models import CondaFile, Context, Package, Platform, Record
+    from pmg.models import (
+        CondaFile,
+        Context,
+        NpmDist,
+        NpmDownload,
+        NpmVersion,
+        Package,
+        Platform,
+        Record,
+    )
 
 GH_TOKEN_ENV = "PMG_GH_TOKEN"  # noqa: S105
 REGISTRY_URL = "https://github.com/zshsetup/pmg-specs/archive/refs/heads/main.tar.gz"
@@ -431,13 +441,13 @@ def is_for_host(pkg: Package) -> bool:
     Its platforms must include the host, and it must have an asset for the host if its download
     needs one, as a command download with assets does.
     """
-    from pmg.models import ApkDownload, CommandDownload
+    from pmg.models import ApkDownload, CommandDownload, GoDownload
 
     host = detect_platform(pkg.min_glibc_version)
     if pkg.platforms and host not in pkg.platforms:
         return False
     return (
-        isinstance(pkg.download, ApkDownload)
+        isinstance(pkg.download, ApkDownload | GoDownload)
         or (isinstance(pkg.download, CommandDownload) and not pkg.assets)
         or host in pkg.assets
     )
@@ -710,6 +720,42 @@ async def conda_file(channel: str, package: str, version: str | None = None) -> 
     return max(files, key=lambda file: (tag_version(file.version), file.upload_time))
 
 
+async def npm_version(package: str, version: str = "latest") -> NpmVersion:
+    """Returns the registry entry of a package at `version`, which is a version or a dist-tag."""
+    import msgspec
+
+    from pmg.models import NpmVersion
+
+    registry = (os.getenv("PMG_NPM_REGISTRY") or "https://registry.npmjs.org").rstrip("/")
+    # a scope is part of the name, the slash of which the registry wants as %2F
+    entry = await cached_download(f"{registry}/{quote(package, safe='@')}/{quote(version)}")
+    return msgspec.json.decode(entry.read_bytes(), type=NpmVersion)
+
+
+async def go_latest(module: str) -> str:
+    """Returns the latest version of a module in the module proxy."""
+    import msgspec
+
+    from pmg.models import GoVersion
+
+    proxy = (os.getenv("PMG_GO_PROXY") or "https://proxy.golang.org").rstrip("/")
+    # the proxy writes each capital letter of a module path as ! and the lowercase letter
+    escaped = re.sub(r"[A-Z]", lambda match: "!" + match.group().lower(), module)
+    entry = await cached_download(f"{proxy}/{escaped}/@latest")
+    return msgspec.json.decode(entry.read_bytes(), type=GoVersion).version
+
+
+def npm_checksum(dist: NpmDist) -> str | None:
+    """Returns the checksum of a tarball as "<algorithm>:<hex>", or None if it has none."""
+    import base64
+
+    for integrity in (dist.integrity or "").split():
+        algorithm, _, digest = integrity.partition("-")
+        if algorithm in {"sha256", "sha384", "sha512"}:
+            return f"{algorithm}:{base64.b64decode(digest).hex()}"
+    return f"sha1:{dist.shasum}" if dist.shasum else None
+
+
 def asset_name(pkg: Package, host: Platform) -> str:
     """Returns the asset template of the host platform.
 
@@ -722,6 +768,24 @@ def asset_name(pkg: Package, host: Platform) -> str:
     return template
 
 
+async def fetch_registry_release(pkg: Package, host: Platform) -> str:
+    """Returns the latest tag of a package whose release is in a registry.
+
+    Raises:
+        PmgError: If the package has no asset for the host, which conda and npm need.
+    """
+    from pmg.models import ApkRelease, CondaRelease, GoRelease
+
+    rl = pkg.release
+    if isinstance(rl, ApkRelease):
+        return await apk_version(alpine_repo(), rl.package)
+    if isinstance(rl, CondaRelease):
+        return (await conda_file(rl.channel, asset_name(pkg, host))).version
+    if isinstance(rl, GoRelease):
+        return await go_latest(rl.module)
+    return (await npm_version(asset_name(pkg, host))).version
+
+
 async def fetch_release(name: str, pkg: Package, host: Platform) -> str:
     """Returns the latest tag.
 
@@ -730,7 +794,7 @@ async def fetch_release(name: str, pkg: Package, host: Platform) -> str:
     Raises:
         PmgError: If a release command fails or prints no tag.
     """
-    from pmg.models import ApkRelease, CommandRelease, CondaRelease, GitHubRelease
+    from pmg.models import CommandRelease, GitHubRelease, StaticRelease
 
     rl = pkg.release
     if isinstance(rl, GitHubRelease):
@@ -740,11 +804,9 @@ async def fetch_release(name: str, pkg: Package, host: Platform) -> str:
         if not tag:  # pragma: no cover
             raise PmgError(f"release command of {name} printed no tag")
         return tag
-    if isinstance(rl, ApkRelease):
-        return await apk_version(alpine_repo(), rl.package)
-    if isinstance(rl, CondaRelease):
-        return (await conda_file(rl.channel, asset_name(pkg, host))).version
-    return rl.tag
+    if isinstance(rl, StaticRelease):
+        return rl.tag
+    return await fetch_registry_release(pkg, host)
 
 
 async def download_file(url: str, dest: Path, checksum: str | None = None) -> Path:
@@ -778,11 +840,19 @@ async def run_download(
     Raises:
         PmgError: If there is no asset for the host platform.
     """
-    from pmg.models import ApkDownload, ApkRelease, CommandDownload, CondaDownload, GitHubDownload
+    from pmg.models import (
+        ApkDownload,
+        ApkRelease,
+        CommandDownload,
+        CondaDownload,
+        GitHubDownload,
+        GoDownload,
+        NpmDownload,
+    )
 
     dl_dir = Path(dl_dir)
     dl, tag = pkg.download, context.tag
-    if isinstance(dl, CommandDownload):
+    if isinstance(dl, CommandDownload | GoDownload):
         # the command installs into the staging dir itself, see run_install
         return []
     if isinstance(dl, ApkDownload):
@@ -809,6 +879,10 @@ async def run_download(
         checksum = f"sha256:{file.sha256}" if file.sha256 else None
         url = f"{mirror}/{dl.channel}/{file.basename}"
         return [await download_file(url, dl_dir / Path(file.basename).name, checksum)]
+    if isinstance(dl, NpmDownload):
+        entry = await npm_version(asset, tag)
+        tarball = Path(urlsplit(entry.dist.tarball).path).name
+        return [await download_file(entry.dist.tarball, dl_dir / tarball, npm_checksum(entry.dist))]
     if isinstance(dl, GitHubDownload):
         if not dl.repo:  # pragma: no cover
             raise RuntimeError("GitHubDownload's repo not set in __post_init__")
@@ -1035,34 +1109,84 @@ def staged_context(context: Context, target: Path) -> Context:
     return msgspec.structs.replace(context, dir=target / "dir", dirs=dirs)
 
 
+def run_download_command(
+    name: str, pkg: Package, context: Context, target: Path, env: dict[str, str]
+) -> None:
+    """Runs the command of a command download, or builds the package of a go download.
+
+    Raises:
+        PmgError: If the command fails.
+    """
+    from pmg.models import CommandDownload, GoDownload
+
+    if isinstance(pkg.download, GoDownload):
+        # go is a dependency, whose bin dir is no PATH entry of the spec commands
+        go_dir = context.deps.get("go", {}).get("dir")
+        go = shlex.quote(f"{go_dir}/bin/go" if go_dir else "go")
+        package = shlex.quote(f"{pkg.download.package}@{context.tag}")
+        env = env | {"GOBIN": str(target / "bin")}
+        run_shell(name, "go install", f"{go} install {package}", target, env)
+    elif isinstance(pkg.download, CommandDownload):
+        host = detect_platform(pkg.min_glibc_version)
+        extra = {"asset": render(asset_name(pkg, host), context)} if pkg.assets else {}
+        run_shell(name, "download command", render(pkg.download.cmd, context, **extra), target, env)
+
+
+def install_npm_dependencies(
+    name: str, download: NpmDownload, content: Path, env: dict[str, str]
+) -> None:
+    """Installs the dependencies of an unpacked package, which a tarball of the registry lacks.
+
+    Raises:
+        PmgError: If the installer fails.
+    """
+    cmd = "bun install --production" if download.installer == "bun" else "npm install --omit=dev"
+    run_shell(name, f"{download.installer} install", cmd, content, env)
+
+
+def write_npm_wrappers(pkg: Package, download: NpmDownload, context: Context, target: Path) -> None:
+    """Replaces the bin scripts of an npm package with wrappers running them with the runtime.
+
+    The scripts have a node shebang, which hosts with bun do not have.
+    """
+    runtime = "bun" if download.installer == "bun" else "node"
+    for command, path in pkg.bin.items():
+        wrapper = target / "bin" / command
+        script = f"{context.dir}/{render(path, context)}"
+        wrapper.write_text(f'#!/bin/sh\nexec {runtime} "{script}" "$@"\n')
+        wrapper.chmod(0o755)
+
+
 def run_install(
     name: str, pkg: Package, context: Context, archives: list[Path], target: Path
 ) -> None:
     """Unpacks the archives and places the files and dirs of the package in the staging dir.
 
-    Release archives lose a single top-level dir; Alpine and conda packages keep their layout.
+    Release archives lose a single top-level dir, as the tarballs of npm do; Alpine and conda
+    packages keep their layout. An npm download then installs the dependencies of the package,
+    and runs its bin scripts through wrappers. A go download builds the package into the bin dir.
     A command download runs its command instead, with the environment of the package and, if the
     package has assets, {{ asset }}.
 
     Raises:
         PmgError: If a file is missing from the archives or a spec command fails.
     """
-    from pmg.models import CommandDownload, GitHubDownload, UrlDownload
+    from pmg.models import GitHubDownload, NpmDownload, UrlDownload
 
     env = command_env(pkg, staged_context(context, target)) | {"PREFIX": str(target)}
-    if isinstance(pkg.download, CommandDownload):
-        host = detect_platform(pkg.min_glibc_version)
-        extra = {"asset": render(asset_name(pkg, host), context)} if pkg.assets else {}
-        cmd = render(pkg.download.cmd, context, **extra)
-        run_shell(name, "download command", cmd, target, env)
+    run_download_command(name, pkg, context, target, env)
     content = target.parent / "unpacked"
     content.mkdir()
     with activity(f"unpacking of {name}"):
         unpack_apart(archives, content)
-    if isinstance(pkg.download, GitHubDownload | UrlDownload):
+    if isinstance(pkg.download, GitHubDownload | UrlDownload | NpmDownload):
         content = strip_single_dir(content)
+    if isinstance(pkg.download, NpmDownload):
+        install_npm_dependencies(name, pkg.download, content, env)
     asset = archives[0].name if archives else ""
     generated = stage_files(pkg, context, content, asset, target)
+    if isinstance(pkg.download, NpmDownload):
+        write_npm_wrappers(pkg, pkg.download, context, target)
     if pkg.content:
         root = content
         if isinstance(pkg.content, str):

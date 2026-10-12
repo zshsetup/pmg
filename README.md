@@ -50,7 +50,16 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
 - `release` and `download` are of the type `github`, `url`, `command` (a command printing the tag,
   or installing into the staging directory, with `{{ asset }}` if there are assets), `static`
   (release only), `apk` (packages of the main Alpine repo, of the host release or else
-  latest-stable), or `conda` (the newest `.conda` file of the asset package in a channel).
+  latest-stable), `conda` (the newest `.conda` file of the asset package in a channel), `go`, or
+  `npm`.
+- `go` takes the latest version of `module` in the Go module proxy as release, and builds
+  `package` (default the module) with `go install` into the bin dir, using the `go` of the
+  dependency of that name. It needs no assets.
+- `npm` takes the latest version of the asset package in the npm registry as release, and
+  unpacks its tarball into the package dir, so the spec needs `content = true`. The `installer`
+  (`bun` by default, or `npm`) then installs the dependencies, so `deps` must provide `bun`. The
+  scripts in `bin` have a node shebang, so pmg replaces them with wrappers that run them with
+  `bun` (or `node` for the installer `npm`).
 - glibc hosts older than `min_glibc` get the musl asset. `platforms` limits a package to some
   platforms, other hosts skip it as a dependency. `platform_deps` adds dependencies for the
   platform whose asset is used, e.g. a loader for the musl build on old glibc hosts.
@@ -161,9 +170,9 @@ eval "$(pmg env)"
 - Set `PMG_GH_TOKEN` (or `GH_TOKEN`) to avoid the rate limit of the GitHub API.
 - pmg writes its zsh completion to `$XDG_DATA_HOME/zsh/site-functions/_pmg`, next to those of the
   packages, and `pmg completion` prints it. It completes commands, specs, and installed packages.
-- `PMG_ALPINE_MIRROR`, `PMG_CONDA_API`, and `PMG_CONDA_URL` replace the Alpine mirror, the
-  anaconda.org API, and the conda download server. Their indexes are cached for an hour in
-  `$XDG_CACHE_HOME/pmg`.
+- `PMG_ALPINE_MIRROR`, `PMG_CONDA_API`, `PMG_CONDA_URL`, `PMG_NPM_REGISTRY`, and `PMG_GO_PROXY`
+  replace the Alpine mirror, the anaconda.org API, the conda download server, the npm registry,
+  and the Go module proxy. Their indexes are cached for an hour in `$XDG_CACHE_HOME/pmg`.
 
 The registry has specs for common tools and for `glibc` (for running glibc programs on musl hosts),
 `musl` (the reverse), `musl-libs` (libstdc++ and libgcc_s for musl hosts), and `patchelf`.

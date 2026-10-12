@@ -5,6 +5,7 @@ Set PMG_OFFLINE=1 to skip the test that installs bat from GitHub.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import ctypes.util
 import functools
@@ -30,7 +31,8 @@ import zstandard
 from typing_extensions import override
 
 import pmg.core
-from pmg.core import detect_platform
+from pmg.core import detect_platform, npm_checksum
+from pmg.models import NpmDist
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -230,6 +232,8 @@ class Env(msgspec.Struct):
             "PMG_ALPINE_MIRROR": f"{self.base_url}/alpine",
             "PMG_CONDA_API": f"{self.base_url}/conda-api",
             "PMG_CONDA_URL": f"{self.base_url}/conda",
+            "PMG_NPM_REGISTRY": f"{self.base_url}/npm",
+            "PMG_GO_PROXY": f"{self.base_url}/go",
             "PMG_REGISTRY_URL": f"{self.base_url}/registry.tar.gz",
         }
         if specs_dir:
@@ -1442,6 +1446,98 @@ channel = "cf"
         "usr",
     ]
     assert (root / "loader").read_text() == "libc"
+
+
+def test_npm_package(env: Env) -> None:
+    tarball = gzip.compress(
+        tar_bytes(
+            {
+                "package/package.json": (b'{"name": "@sc/jsy"}', 0o644),
+                "package/bin/jsy": (b"#!/bin/sh\necho jsy\n", 0o755),
+            }
+        )
+    )
+    (env.assets / "jsy-2.1.0.tgz").write_bytes(tarball)
+    entry = {
+        "version": "2.1.0",
+        "dist": {
+            "tarball": f"{env.base_url}/jsy-2.1.0.tgz",
+            "integrity": "sha512-" + base64.b64encode(hashlib.sha512(tarball).digest()).decode(),
+        },
+    }
+    # a scoped name has its slash escaped in the URL of the registry
+    registry = env.assets / "npm"
+    registry.mkdir()
+    (registry / "@sc" / "jsy").mkdir(parents=True)
+    for key in ("latest", "2.1.0"):
+        (registry / "@sc" / "jsy" / key).write_text(json.dumps(entry))
+    # the tarball has no dependencies, so the installer of the spec fetches them
+    env.system.mkdir()
+    # bun runs the scripts of the package, too
+    (env.system / "bun").write_text(
+        '#!/bin/sh\nif [ "$1" = install ]; then mkdir node_modules; echo "$@" > node_modules/args\n'
+        'else exec sh "$@"; fi\n'
+    )
+    (env.system / "bun").chmod(0o755)
+    assets = "\n".join(f'{platform} = "@sc/jsy"' for platform in PLATFORMS)
+    env.write_spec(
+        "jsy",
+        f"""content = true
+bin = {{ jsy = "bin/jsy" }}
+test = '{{{{ cmd }}}}'
+[external]
+[release]
+type = "npm"
+[download]
+type = "npm"
+[assets]
+{assets}
+""",
+    )
+    env.pmg("install", "jsy")
+    assert env.installed() == {"jsy@2.1.0": "explicit active"}
+    root = env.packages / "jsy@2.1.0"
+    assert (root / "package.json").exists()
+    assert (root / "node_modules" / "args").read_text() == "install --production\n"
+    # the script wants node, so the command runs it with bun
+    wrapper = (env.bin / "jsy").read_text()
+    assert wrapper == f'#!/bin/sh\nexec bun "{root}/bin/jsy" "$@"\n'
+
+
+def test_go_package(env: Env) -> None:
+    # capital letters in a module path are escaped as ! and the lowercase letter
+    proxy = env.assets / "go" / "example.com" / "!mod" / "tool" / "@latest"
+    proxy.parent.mkdir(parents=True)
+    proxy.write_text(json.dumps({"Version": "v0.3.0", "Time": "2026-01-01T00:00:00Z"}))
+    env.add_system_command("go", "")
+    # the go command builds the package into GOBIN as the last element of its path
+    (env.system / "go").write_text(
+        '#!/bin/sh\nprintf \'#!/bin/sh\\necho %s\\n\' "$*" > "$GOBIN/tool"\n'
+        'chmod +x "$GOBIN/tool"\n'
+    )
+    env.write_spec(
+        "tool",
+        """test = '{{ cmd }}'
+[external]
+[release]
+type = "go"
+module = "example.com/Mod/tool"
+[download]
+type = "go"
+""",
+    )
+    env.pmg("install", "tool")
+    assert env.installed() == {"tool@v0.3.0": "explicit active"}
+    assert env.run_bin("tool") == "install example.com/Mod/tool@v0.3.0"
+
+
+def test_npm_checksum() -> None:
+    sha512 = base64.b64encode(hashlib.sha512(b"x").digest()).decode()
+    # the first algorithm with a digest wins, and the SHA-1 is the fallback
+    both = NpmDist(tarball="t", integrity=f"sha1-AAAA sha512-{sha512}", shasum="ab")
+    assert npm_checksum(both) == f"sha512:{hashlib.sha512(b'x').hexdigest()}"
+    assert npm_checksum(NpmDist(tarball="t", shasum="ab")) == "sha1:ab"
+    assert npm_checksum(NpmDist(tarball="t")) is None
 
 
 def registry_spec(host_platforms: tuple[str, ...]) -> pytest.MarkDecorator:
