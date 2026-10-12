@@ -6,6 +6,7 @@ Set PMG_OFFLINE=1 to skip the test that installs bat from GitHub.
 from __future__ import annotations
 
 import base64
+import bz2
 import contextlib
 import ctypes.util
 import functools
@@ -14,6 +15,7 @@ import hashlib
 import http.server
 import io
 import json
+import lzma
 import os
 import platform
 import shutil
@@ -35,9 +37,9 @@ from pmg.core import detect_platform, npm_checksum
 from pmg.models import NpmDist
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
-ArchiveFormat: TypeAlias = Literal["tar.gz", "tar.zst", "zip", "bare"]
+ArchiveFormat: TypeAlias = Literal["tar.gz", "tar.zst", "zip", "bare", "gz", "xz", "bz2", "zst"]
 
 FIXTURE_SPECS = Path(__file__).parent / "fixtures" / "specs"
 LINUX = ("glibc_x64", "glibc_arm64", "musl_x64", "musl_arm64")
@@ -189,10 +191,23 @@ class Env(msgspec.Struct):
                 zip_info = zipfile.ZipInfo(name)
                 zip_info.external_attr = 0o755 << 16
                 zip_file.writestr(zip_info, script_bytes)
-        else:
+        elif archive_format == "bare":
             asset = f"{name}-{{{{ version }}}}-linux"
             bin_path = "{{ asset }}"
             (self.assets / f"{name}-{version}-linux").write_bytes(script_bytes)
+        else:
+            # a single compressed binary, which {{ asset }} names without the suffix
+            asset = f"{name}-{{{{ version }}}}-linux.{archive_format}"
+            bin_path = "{{ asset }}"
+            compressors: dict[str, Callable[[bytes], bytes]] = {
+                "gz": gzip.compress,
+                "xz": lzma.compress,
+                "bz2": bz2.compress,
+                "zst": zstandard.compress,
+            }
+            (self.assets / f"{name}-{version}-linux.{archive_format}").write_bytes(
+                compressors[archive_format](script_bytes)
+            )
         lines = [f"deps = {json.dumps(list(deps))}", *spec, f"test = '{test or '{{ cmd }}'}'"]
         if check:
             lines.append(f"check = {check}")
@@ -284,7 +299,9 @@ def test_install_resolves_dependencies(env: Env) -> None:
     assert env.installed() == expected
 
 
-@pytest.mark.parametrize("archive_format", ["tar.gz", "tar.zst", "zip", "bare"])
+@pytest.mark.parametrize(
+    "archive_format", ["tar.gz", "tar.zst", "zip", "bare", "gz", "xz", "bz2", "zst"]
+)
 def test_install_unpacks_archive_formats(env: Env, archive_format: ArchiveFormat) -> None:
     # tar.gz has a top-level dir to strip; zip must keep the executable bit it stores
     env.add_package("tool", archive_format=archive_format)

@@ -64,7 +64,9 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
   platforms, other hosts skip it as a dependency. `platform_deps` adds dependencies for the
   platform whose asset is used, e.g. a loader for the musl build on old glibc hosts.
 - `bin` maps names in `~/.local/bin` to paths in the archive. A single top-level directory in
-  the archive is stripped. `links` adds symlinks instead of copies.
+  the archive is stripped. A single file compressed with gzip, xz, bzip2, or zstd (`taplo.gz`) is
+  decompressed, and `{{ asset }}` names it without the suffix. `links` adds symlinks instead of
+  copies.
 - `man` lists man pages in the archive as paths or globs (`share/man/man1/*.1`), the file extension
   is the section.
 - `completions` maps a command to its completion script per shell, either a path in the archive

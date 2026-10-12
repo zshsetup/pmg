@@ -88,6 +88,8 @@ CACHE_SECONDS = 3600
 """Age after which indexes of Alpine and conda packages are downloaded again."""
 TAR_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".apk")
 ZSTD_SUFFIXES = (".tar.zst", ".tzst")
+COMPRESSED_SUFFIXES = (".gz", ".xz", ".bz2", ".zst")
+"""Suffixes of a single compressed file, unlike the archives above."""
 MAX_DOWNLOADS = 6
 """Downloads at once, each with a bar of its own on a terminal."""
 
@@ -921,8 +923,40 @@ def extract_tar_zst(fileobj: IO[bytes], dest: Path) -> None:
         extract_tar(tar_file, dest)
 
 
+def decompressed_name(name: str) -> str:
+    """Returns the name of a single compressed file once unpacked, or `name` for other files."""
+    if name.endswith((*TAR_SUFFIXES, *ZSTD_SUFFIXES, ".zip", ".conda")):
+        return name
+    return next((name.removesuffix(s) for s in COMPRESSED_SUFFIXES if name.endswith(s)), name)
+
+
+def decompress_file(archive: Path, dest: Path) -> None:
+    """Decompresses a single file compressed with gzip, xz, bzip2, or zstd into `dest`."""
+    import bz2
+    import gzip
+    import lzma
+
+    import zstandard
+
+    with archive.open("rb") as source, dest.open("wb") as target:
+        if archive.suffix == ".zst":
+            with zstandard.ZstdDecompressor().stream_reader(source) as zst:
+                shutil.copyfileobj(zst, target)
+        elif archive.suffix == ".gz":
+            with gzip.GzipFile(fileobj=source) as gz:
+                shutil.copyfileobj(gz, target)
+        elif archive.suffix == ".xz":
+            with lzma.LZMAFile(source) as xz:
+                shutil.copyfileobj(xz, target)
+        else:
+            with bz2.BZ2File(source) as bz:
+                shutil.copyfileobj(bz, target)
+
+
 def unpack(archive: Path, dest: Path) -> None:
     """Unpacks the archive into `dest`; other files count as a bare binary.
+
+    A single compressed file, like taplo.gz, is decompressed to a file without the suffix.
 
     Alpine packages lose their metadata files, conda packages keep only their payload.
     """
@@ -953,6 +987,8 @@ def unpack(archive: Path, dest: Path) -> None:
         if archive.name.endswith(".apk"):
             for path in dest.glob(".*"):
                 remove_path(path)
+    elif (name := decompressed_name(archive.name)) != archive.name:
+        decompress_file(archive, dest / name)
     else:
         shutil.copy2(archive, dest / archive.name)
 
@@ -1183,7 +1219,7 @@ def run_install(
         content = strip_single_dir(content)
     if isinstance(pkg.download, NpmDownload):
         install_npm_dependencies(name, pkg.download, content, env)
-    asset = archives[0].name if archives else ""
+    asset = decompressed_name(archives[0].name) if archives else ""
     generated = stage_files(pkg, context, content, asset, target)
     if isinstance(pkg.download, NpmDownload):
         write_npm_wrappers(pkg, pkg.download, context, target)
