@@ -33,7 +33,7 @@ import zstandard
 from typing_extensions import override
 
 import pmg.core
-from pmg.core import detect_platform, npm_checksum
+from pmg.core import crate_index_path, detect_platform, npm_checksum
 from pmg.models import NpmDist
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ def clean_environ(home: Path) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(("XDG_", "PMG_HOME", "PMG_SPECS_DIR"))
+        if not key.startswith(("XDG_", "PMG_HOME", "PMG_SPECS_DIR", "RUSTUP_HOME", "CARGO_HOME"))
     }
     # only the basics, so no command of the host counts as an external version
     env |= {"HOME": str(home), "PATH": f"/usr/bin{os.pathsep}/bin"}
@@ -249,6 +249,7 @@ class Env(msgspec.Struct):
             "PMG_CONDA_URL": f"{self.base_url}/conda",
             "PMG_NPM_REGISTRY": f"{self.base_url}/npm",
             "PMG_GO_PROXY": f"{self.base_url}/go",
+            "PMG_CARGO_INDEX": f"{self.base_url}/cargo-index",
             "PMG_REGISTRY_URL": f"{self.base_url}/registry.tar.gz",
         }
         if specs_dir:
@@ -1550,6 +1551,62 @@ type = "go"
     env.pmg("install", "tool")
     assert env.installed() == {"tool@v0.3.0": "explicit active"}
     assert env.run_bin("tool") == "install example.com/Mod/tool@v0.3.0"
+
+
+@pytest.mark.parametrize(("installer", "rustup"), [("install", True), ("binstall", False)])
+def test_cargo_package(env: Env, installer: str, rustup: bool) -> None:
+    # the newest stable version, as yanked versions and prereleases are skipped
+    versions = [
+        {"vers": "1.0.0", "yanked": False},
+        {"vers": "1.2.0", "yanked": False},
+        {"vers": "1.3.0", "yanked": True},
+        {"vers": "2.0.0-beta.1", "yanked": False},
+    ]
+    index = env.assets / "cargo-index" / "to" / "ol"
+    index.mkdir(parents=True)
+    (index / "tool-crate").write_text("\n".join(json.dumps(version) for version in versions) + "\n")
+    # the cargo of the test builds the crate into the root it is given
+    if rustup:
+        env.add_package("rustup")
+    env.system.mkdir()
+    (env.system / "cargo").write_text(
+        '#!/bin/sh\nsub="$1"\n'
+        "for last; do :; done\n"
+        'while [ $# -gt 0 ]; do\n  [ "$1" = --root ] && root="$2"\n  shift\ndone\n'
+        'mkdir -p "$root/bin"\n'
+        'echo "#!/bin/sh\necho $sub $last ${RUSTUP_HOME##*/}" > "$root/bin/${last%@*}"\n'
+        'chmod +x "$root/bin/${last%@*}"\n'
+    )
+    (env.system / "cargo").chmod(0o755)
+    env.write_spec(
+        "tool-crate",
+        f"""deps = {json.dumps(["rustup"] if rustup else [])}
+test = '{{{{ cmd }}}}'
+[external]
+[release]
+type = "cargo"
+crate = "tool-crate"
+[download]
+type = "cargo"
+installer = "{installer}"
+""",
+    )
+    env.pmg("install", "tool-crate")
+    installed = {"tool-crate@1.2.0": "explicit active"}
+    if rustup:
+        installed["rustup@v1.0"] = "dependency active"
+    assert env.installed() == installed
+    # the subcommand, the crate and version of the release, and the home of a rustup dependency
+    expected = [installer, "tool-crate@1.2.0", *(["rustup@v1.0"] if rustup else [])]
+    assert env.run_bin("tool-crate").split() == expected
+
+
+def test_crate_index_path() -> None:
+    # the sparse index splits the name by its length, in lowercase
+    assert crate_index_path("a") == "1/a"
+    assert crate_index_path("Ab") == "2/ab"
+    assert crate_index_path("abc") == "3/a/abc"
+    assert crate_index_path("Serde") == "se/rd/serde"
 
 
 def test_npm_checksum() -> None:

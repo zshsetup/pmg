@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
     from pmg.consumers import Files, GitHubApi
     from pmg.models import (
+        CargoDownload,
         CondaFile,
         Context,
         NpmDist,
@@ -443,13 +444,13 @@ def is_for_host(pkg: Package) -> bool:
     Its platforms must include the host, and it must have an asset for the host if its download
     needs one, as a command download with assets does.
     """
-    from pmg.models import ApkDownload, CommandDownload, GoDownload
+    from pmg.models import ApkDownload, CargoDownload, CommandDownload, GoDownload
 
     host = detect_platform(pkg.min_glibc_version)
     if pkg.platforms and host not in pkg.platforms:
         return False
     return (
-        isinstance(pkg.download, ApkDownload | GoDownload)
+        isinstance(pkg.download, ApkDownload | CargoDownload | GoDownload)
         or (isinstance(pkg.download, CommandDownload) and not pkg.assets)
         or host in pkg.assets
     )
@@ -722,6 +723,42 @@ async def conda_file(channel: str, package: str, version: str | None = None) -> 
     return max(files, key=lambda file: (tag_version(file.version), file.upload_time))
 
 
+def crate_index_path(crate: str) -> str:
+    """Returns the path of a crate in the sparse index of crates.io, by the length of its name."""
+    name = crate.lower()
+    if len(name) <= 2:  # noqa: PLR2004
+        return f"{len(name)}/{name}"
+    if len(name) == 3:  # noqa: PLR2004
+        return f"3/{name[0]}/{name}"
+    return f"{name[:2]}/{name[2:4]}/{name}"
+
+
+async def cargo_latest(crate: str) -> str:
+    """Returns the newest version of a crate that is neither yanked nor a prerelease.
+
+    Raises:
+        PmgError: If the crate has no such version.
+    """
+    import msgspec
+    from packaging.version import Version
+
+    from pmg.models import CrateVersion
+
+    index = (os.getenv("PMG_CARGO_INDEX") or "https://index.crates.io").rstrip("/")
+    entry = await cached_download(f"{index}/{crate_index_path(crate)}")
+    # one JSON object per line and version
+    versions = [
+        msgspec.json.decode(line, type=CrateVersion)
+        for line in entry.read_bytes().splitlines()
+        if line
+    ]
+    # a hyphen starts the prerelease of a semantic version, a plus the build, which is ignored
+    stable = [entry.vers for entry in versions if not entry.yanked and "-" not in entry.vers]
+    if not stable:  # pragma: no cover
+        raise PmgError(f"{crate} has no stable version on crates.io")
+    return max(stable, key=lambda vers: Version(vers.split("+")[0]))
+
+
 async def npm_version(package: str, version: str = "latest") -> NpmVersion:
     """Returns the registry entry of a package at `version`, which is a version or a dist-tag."""
     import msgspec
@@ -776,9 +813,11 @@ async def fetch_registry_release(pkg: Package, host: Platform) -> str:
     Raises:
         PmgError: If the package has no asset for the host, which conda and npm need.
     """
-    from pmg.models import ApkRelease, CondaRelease, GoRelease
+    from pmg.models import ApkRelease, CargoRelease, CondaRelease, GoRelease
 
     rl = pkg.release
+    if isinstance(rl, CargoRelease):
+        return await cargo_latest(rl.crate)
     if isinstance(rl, ApkRelease):
         return await apk_version(alpine_repo(), rl.package)
     if isinstance(rl, CondaRelease):
@@ -845,6 +884,7 @@ async def run_download(
     from pmg.models import (
         ApkDownload,
         ApkRelease,
+        CargoDownload,
         CommandDownload,
         CondaDownload,
         GitHubDownload,
@@ -854,7 +894,7 @@ async def run_download(
 
     dl_dir = Path(dl_dir)
     dl, tag = pkg.download, context.tag
-    if isinstance(dl, CommandDownload | GoDownload):
+    if isinstance(dl, CommandDownload | GoDownload | CargoDownload):
         # the command installs into the staging dir itself, see run_install
         return []
     if isinstance(dl, ApkDownload):
@@ -1148,12 +1188,12 @@ def staged_context(context: Context, target: Path) -> Context:
 def run_download_command(
     name: str, pkg: Package, context: Context, target: Path, env: dict[str, str]
 ) -> None:
-    """Runs the command of a command download, or builds the package of a go download.
+    """Runs the command of a command download, or builds the package of a go or cargo download.
 
     Raises:
         PmgError: If the command fails.
     """
-    from pmg.models import CommandDownload, GoDownload
+    from pmg.models import CargoDownload, CommandDownload, GoDownload
 
     if isinstance(pkg.download, GoDownload):
         # go is a dependency, whose bin dir is no PATH entry of the spec commands
@@ -1162,10 +1202,38 @@ def run_download_command(
         package = shlex.quote(f"{pkg.download.package}@{context.tag}")
         env = env | {"GOBIN": str(target / "bin")}
         run_shell(name, "go install", f"{go} install {package}", target, env)
+    elif isinstance(pkg.download, CargoDownload):
+        run_cargo(name, pkg.download, context, target, env)
     elif isinstance(pkg.download, CommandDownload):
         host = detect_platform(pkg.min_glibc_version)
         extra = {"asset": render(asset_name(pkg, host), context)} if pkg.assets else {}
         run_shell(name, "download command", render(pkg.download.cmd, context, **extra), target, env)
+
+
+def run_cargo(
+    name: str, download: CargoDownload, context: Context, target: Path, env: dict[str, str]
+) -> None:
+    """Installs a crate with cargo into the staging dir, which has no tracking files.
+
+    `binstall` only fetches prebuilt binaries, as the strategy that compiles is disabled.
+
+    Raises:
+        PmgError: If cargo fails.
+    """
+    # rustup is a dependency, whose cargo is no PATH entry of the spec commands
+    rustup_dir = context.deps.get("rustup", {}).get("dir")
+    if rustup_dir:
+        cargo_home = context.data / "cargo"
+        path = f"{cargo_home / 'bin'}{os.pathsep}{os.getenv('PATH', '')}"
+        env = env | {"RUSTUP_HOME": rustup_dir, "CARGO_HOME": str(cargo_home), "PATH": path}
+    crate = shlex.quote(f"{download.crate}@{context.tag.removeprefix('v')}")
+    flags = f"--locked --no-track --root {shlex.quote(str(target))}"
+    if download.installer == "binstall":
+        cmd = f"cargo binstall --no-confirm --disable-strategies compile {flags} {crate}"
+        env = env | {"BINSTALL_DISABLE_TELEMETRY": "true"}
+    else:
+        cmd = f"cargo install {flags} {crate}"
+    run_shell(name, f"cargo {download.installer}", cmd, target, env)
 
 
 def install_npm_dependencies(

@@ -50,11 +50,16 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
 - `release` and `download` are of the type `github`, `url`, `command` (a command printing the tag,
   or installing into the staging directory, with `{{ asset }}` if there are assets), `static`
   (release only), `apk` (packages of the main Alpine repo, of the host release or else
-  latest-stable), `conda` (the newest `.conda` file of the asset package in a channel), `go`, or
-  `npm`.
+  latest-stable), `conda` (the newest `.conda` file of the asset package in a channel), `go`,
+  `npm`, or `cargo`.
 - `go` takes the latest version of `module` in the Go module proxy as release, and builds
   `package` (default the module) with `go install` into the bin dir, using the `go` of the
   dependency of that name. It needs no assets.
+- `cargo` takes the newest stable version of `crate` on crates.io as release, and installs the
+  crate into the bin dir with `cargo install` (`installer = "install"`, which compiles it and
+  may need a C toolchain, so add `rustup` and `cc` to `deps`) or `cargo binstall` (`installer =
+  "binstall"`, which only fetches prebuilt binaries and needs `cargo-binstall` in `deps`). It is
+  for packages without binaries to download, and needs no assets.
 - `npm` takes the latest version of the asset package in the npm registry as release, and
   unpacks its tarball into the package dir, so the spec needs `content = true`. The `installer`
   (`bun` by default, or `npm`) then installs the dependencies, so `deps` must provide `bun`. The
@@ -172,9 +177,10 @@ eval "$(pmg env)"
 - Set `PMG_GH_TOKEN` (or `GH_TOKEN`) to avoid the rate limit of the GitHub API.
 - pmg writes its zsh completion to `$XDG_DATA_HOME/zsh/site-functions/_pmg`, next to those of the
   packages, and `pmg completion` prints it. It completes commands, specs, and installed packages.
-- `PMG_ALPINE_MIRROR`, `PMG_CONDA_API`, `PMG_CONDA_URL`, `PMG_NPM_REGISTRY`, and `PMG_GO_PROXY`
-  replace the Alpine mirror, the anaconda.org API, the conda download server, the npm registry,
-  and the Go module proxy. Their indexes are cached for an hour in `$XDG_CACHE_HOME/pmg`.
+- `PMG_ALPINE_MIRROR`, `PMG_CONDA_API`, `PMG_CONDA_URL`, `PMG_NPM_REGISTRY`, `PMG_GO_PROXY`, and
+  `PMG_CARGO_INDEX` replace the Alpine mirror, the anaconda.org API, the conda download server,
+  the npm registry, the Go module proxy, and the sparse index of crates.io. Their indexes are
+  cached for an hour in `$XDG_CACHE_HOME/pmg`.
 
 The registry has specs for common tools and for `glibc` (for running glibc programs on musl hosts),
 `musl` (the reverse), `musl-libs` (libstdc++ and libgcc_s for musl hosts), and `patchelf`.

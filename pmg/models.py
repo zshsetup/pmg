@@ -59,6 +59,12 @@ class GoRelease(BaseStruct, tag="go", kw_only=True):
     module: str
 
 
+class CargoRelease(BaseStruct, tag="cargo", kw_only=True):
+    """Stores the crate whose newest stable version on crates.io is the latest version."""
+
+    crate: str
+
+
 class NpmRelease(BaseStruct, tag="npm", kw_only=True):
     """Marks the latest version of the asset package in the npm registry as the latest version."""
 
@@ -71,6 +77,7 @@ Release: TypeAlias = (
     | CondaRelease
     | GoRelease
     | NpmRelease
+    | CargoRelease
 )
 
 
@@ -112,6 +119,16 @@ class GoDownload(BaseStruct, tag="go", kw_only=True):
     """Package to build, if it differs from the module of a Go release spec."""
 
 
+class CargoDownload(BaseStruct, tag="cargo", kw_only=True):
+    """Stores the crate that cargo installs into the bin dir, for packages without binaries."""
+
+    crate: str | None = None
+    """Crate to install, if it differs from the crate of a cargo release spec."""
+    installer: Literal["install", "binstall"] = "install"
+    """`install` compiles the crate, which needs a C toolchain for some; `binstall` only fetches
+    the prebuilt binaries that cargo-binstall finds, which needs `cargo-binstall` as a dep."""
+
+
 class NpmDownload(BaseStruct, tag="npm", kw_only=True):
     """Stores the tool installing the dependencies of the asset package from the npm registry."""
 
@@ -127,6 +144,7 @@ Download: TypeAlias = (
     | CondaDownload
     | GoDownload
     | NpmDownload
+    | CargoDownload
 )
 
 
@@ -271,6 +289,12 @@ class Package(BaseStruct, kw_only=True):
             if not isinstance(rl, GoRelease):  # pragma: no cover
                 raise ValueError("GoDownload needs to specify the package if GoRelease is not used")
             dl.package = rl.module
+        if isinstance(dl, CargoDownload) and not dl.crate:
+            if not isinstance(rl, CargoRelease):  # pragma: no cover
+                raise ValueError(
+                    "CargoDownload needs to specify the crate if CargoRelease is not used"
+                )
+            dl.crate = rl.crate
         if isinstance(dl, NpmDownload) and not self.content:  # pragma: no cover
             raise ValueError("an npm download needs content = true, for its node_modules")
 
@@ -382,6 +406,13 @@ class GoVersion(msgspec.Struct, kw_only=True):
     """Stores a version of a module from the Go module proxy."""
 
     version: str = msgspec.field(name="Version")
+
+
+class CrateVersion(msgspec.Struct, kw_only=True):
+    """Stores a version of a crate from the sparse index of crates.io."""
+
+    vers: str
+    yanked: bool = False
 
 
 class NpmDist(msgspec.Struct, kw_only=True):

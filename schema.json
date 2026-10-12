@@ -28,6 +28,9 @@
             },
             {
               "$ref": "#/$defs/NpmRelease"
+            },
+            {
+              "$ref": "#/$defs/CargoRelease"
             }
           ],
           "discriminator": {
@@ -39,7 +42,8 @@
               "apk": "#/$defs/ApkRelease",
               "conda": "#/$defs/CondaRelease",
               "go": "#/$defs/GoRelease",
-              "npm": "#/$defs/NpmRelease"
+              "npm": "#/$defs/NpmRelease",
+              "cargo": "#/$defs/CargoRelease"
             }
           }
         },
@@ -65,6 +69,9 @@
             },
             {
               "$ref": "#/$defs/NpmDownload"
+            },
+            {
+              "$ref": "#/$defs/CargoDownload"
             }
           ],
           "discriminator": {
@@ -76,7 +83,8 @@
               "apk": "#/$defs/ApkDownload",
               "conda": "#/$defs/CondaDownload",
               "go": "#/$defs/GoDownload",
-              "npm": "#/$defs/NpmDownload"
+              "npm": "#/$defs/NpmDownload",
+              "cargo": "#/$defs/CargoDownload"
             }
           }
         },
@@ -415,6 +423,26 @@
       ],
       "additionalProperties": false
     },
+    "CargoRelease": {
+      "title": "CargoRelease",
+      "description": "Stores the crate whose newest stable version on crates.io is the latest version.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "cargo"
+          ]
+        },
+        "crate": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "crate"
+      ],
+      "additionalProperties": false
+    },
     "GitHubDownload": {
       "title": "GitHubDownload",
       "description": "Stores the GitHub repo whose release assets are downloaded.",
@@ -568,6 +596,40 @@
             "npm"
           ],
           "default": "bun"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "CargoDownload": {
+      "title": "CargoDownload",
+      "description": "Stores the crate that cargo installs into the bin dir, for packages without binaries.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "cargo"
+          ]
+        },
+        "crate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "installer": {
+          "enum": [
+            "binstall",
+            "install"
+          ],
+          "default": "install"
         }
       },
       "required": [
