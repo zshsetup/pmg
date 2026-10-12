@@ -56,10 +56,10 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
   `package` (default the module) with `go install` into the bin dir, using the `go` of the
   dependency of that name. It needs no assets.
 - `cargo` takes the newest stable version of `crate` on crates.io as release, and installs the
-  crate into the bin dir with `cargo install` (`installer = "install"`, which compiles it and
-  may need a C toolchain, so add `rustup` and `cc` to `deps`) or `cargo binstall` (`installer =
-  "binstall"`, which only fetches prebuilt binaries and needs `cargo-binstall` in `deps`). It is
-  for packages without binaries to download, and needs no assets.
+  crate into the bin dir. With the `installer` `install` (the default) cargo compiles it, which
+  may need a C toolchain, so add `rustup` and `cc` to `deps`. With `binstall` it only fetches
+  prebuilt binaries, and `cargo-binstall` must be in `deps`. It is for packages without
+  binaries to download, and needs no assets.
 - `npm` takes the latest version of the asset package in the npm registry as release, and
   unpacks its tarball into the package dir, so the spec needs `content = true`. The `installer`
   (`bun` by default, or `npm`) then installs the dependencies, so `deps` must provide `bun`. The
