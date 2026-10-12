@@ -655,20 +655,24 @@ async def refresh_cached(url: str) -> Path:
     return await download_file(url, path)
 
 
+def host_alpine(release_file: Path = Path("/etc/alpine-release")) -> Version | None:
+    """Returns the Alpine release of the host as major.minor, or None on other hosts."""
+    from packaging.version import Version
+
+    if not release_file.exists():
+        return None
+    return Version(".".join(release_file.read_text().split(".")[:2]))
+
+
 def alpine_repo(min_alpine: Version | None = None) -> str:
     """Returns the URL of the main Alpine repo of the host release, or else of latest-stable.
 
     Hosts with a release older than `min_alpine` get latest-stable, too.
     """
-    from packaging.version import Version
-
     mirror = os.getenv("PMG_ALPINE_MIRROR") or "https://dl-cdn.alpinelinux.org/alpine"
-    release_file = Path("/etc/alpine-release")
-    release = "latest-stable"
-    if release_file.exists():
-        host = ".".join(release_file.read_text().split(".")[:2])
-        if min_alpine is None or Version(host) >= min_alpine:
-            release = f"v{host}"
+    host = host_alpine()
+    old = host is not None and min_alpine is not None and host < min_alpine
+    release = f"v{host}" if host is not None and not old else "latest-stable"
     machine = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
     return f"{mirror}/{release}/main/{machine}"
 

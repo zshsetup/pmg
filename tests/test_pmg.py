@@ -30,10 +30,11 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 import msgspec
 import pytest
 import zstandard
+from packaging.version import Version
 from typing_extensions import override
 
 import pmg.core
-from pmg.core import crate_index_path, detect_platform, npm_checksum
+from pmg.core import crate_index_path, detect_platform, host_alpine, npm_checksum
 from pmg.models import NpmDist
 
 if TYPE_CHECKING:
@@ -1401,6 +1402,21 @@ packages = ["tool", "toollib"]
         "usr/lib",
         "usr/lib/libtool.so.1",
     ]
+
+
+def test_alpine_release_of_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    release_file = tmp_path / "alpine-release"
+    assert host_alpine(release_file) is None
+    release_file.write_text("3.20.3\n")
+    assert str(host_alpine(release_file)) == "3.20"
+    monkeypatch.setattr(pmg.core, "host_alpine", lambda: host_alpine(release_file))
+    monkeypatch.setenv("PMG_ALPINE_MIRROR", "mirror")
+    machine = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
+    assert pmg.core.alpine_repo() == f"mirror/v3.20/main/{machine}"
+    assert pmg.core.alpine_repo(Version("3.17")) == f"mirror/v3.20/main/{machine}"
+    assert pmg.core.alpine_repo(Version("3.21")) == f"mirror/latest-stable/main/{machine}"
+    monkeypatch.setattr(pmg.core, "host_alpine", lambda: None)
+    assert pmg.core.alpine_repo(Version("3.17")) == f"mirror/latest-stable/main/{machine}"
 
 
 def test_min_alpine(env: Env) -> None:
