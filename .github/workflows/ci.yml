@@ -57,4 +57,4 @@ jobs:
       - run: uv run python -m pmg validate pmg-specs/specs/*.toml
       - run: |
           sed -i "s|^#:schema .*|#:schema file://$PWD/schema.json|" pmg-specs/specs/*.toml
-          uvx --from taplo taplo check pmg-specs/specs/*.toml
+          uvx tombi lint pmg-specs/specs/*.toml

@@ -131,7 +131,7 @@ pmg uses for a package.
 
 `schema.json` is the JSON schema of specs, which `pmg schema` prints and a test keeps current. A
 first line `#:schema https://raw.githubusercontent.com/zshsetup/pmg/main/schema.json` hands it to
-editors and `taplo check`. `pmg validate <spec>...` checks specs against the models of pmg itself.
+editors and `tombi lint`. `pmg validate <spec>...` checks specs against the models of pmg itself.
 
 ```bash
 pmg install bat
