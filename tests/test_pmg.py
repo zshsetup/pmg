@@ -1469,7 +1469,11 @@ def test_npm_package(env: Env) -> None:
     tarball = gzip.compress(
         tar_bytes(
             {
-                "package/package.json": (b'{"name": "@sc/jsy"}', 0o644),
+                # files of the repo among the devDependencies, which bun would fail to resolve
+                "package/package.json": (
+                    b'{"name": "@sc/jsy", "devDependencies": {"cfg": "file:packages/cfg"}}',
+                    0o644,
+                ),
                 "package/bin/jsy": (b"#!/bin/sh\necho jsy\n", 0o755),
             }
         )

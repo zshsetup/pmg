@@ -1176,6 +1176,13 @@ def install_npm_dependencies(
     Raises:
         PmgError: If the installer fails.
     """
+    import json
+
+    # bun resolves the devDependencies even with --production, which can be files of the repo
+    manifest = content / "package.json"
+    package = json.loads(manifest.read_text())
+    package.pop("devDependencies", None)
+    manifest.write_text(json.dumps(package, indent=2))
     cmd = "bun install --production" if download.installer == "bun" else "npm install --omit=dev"
     run_shell(name, f"{download.installer} install", cmd, content, env)
 
