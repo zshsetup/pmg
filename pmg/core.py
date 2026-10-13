@@ -263,6 +263,15 @@ def decode(spec: str) -> Package:
     return msgspec.toml.decode(spec, type=Package)
 
 
+def in_event_loop() -> bool:
+    """Checks whether an event loop is running in this thread."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def find_spec(name: str) -> Path:
     """Returns the spec file of a package, from the first spec dir that has one.
 
@@ -270,11 +279,12 @@ def find_spec(name: str) -> Path:
         PmgError: If no spec dir has one.
     """
     path = available_specs().get(name)
-    # the first use of pmg downloads the registry, and a later one gets a spec added since
-    if path is None:
+    # the first use of pmg downloads the registry, and a later one gets a spec added since; a
+    # running event loop cannot run another, so code in one gets specs refreshed before it starts
+    if path is None and not in_event_loop():
         update_registry()
         path = available_specs().get(name)
-    if path is None:  # pragma: no cover
+    if path is None:
         dirs = ", ".join(str(directory) for directory in spec_dirs())
         raise PmgError(f"no spec for {name} in {dirs}")
     return path
@@ -295,18 +305,26 @@ def load_spec(name: str) -> Package:
         raise PmgError(f"invalid spec {path}: {e}") from e
 
 
-def update_registry() -> None:
+async def fetch_registry() -> None:
     """Replaces the registry with the specs of its repo, from `PMG_REGISTRY_URL`."""
     url = os.getenv("PMG_REGISTRY_URL") or REGISTRY_URL
     home = pmg_home()
     home.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=home) as tmp:
-        archive = run_async(download_file(url, Path(tmp) / "registry.tar.gz"))
+        archive = await download_file(url, Path(tmp) / "registry.tar.gz")
         unpack(archive, Path(tmp) / "unpacked")
         if registry_dir().exists():
             registry_dir().rename(Path(tmp) / "old")
         strip_single_dir(Path(tmp) / "unpacked").rename(registry_dir())
     logger.info("updated the specs from %s", url)
+
+
+def update_registry() -> None:
+    """Replaces the registry with the specs of its repo, with an event loop of its own.
+
+    For code outside of an event loop; async code awaits `fetch_registry`.
+    """
+    run_async(fetch_registry())
 
 
 def record_path(key: str) -> Path:
@@ -2168,6 +2186,11 @@ def upgrade_packages(names: Iterable[str]) -> list[str]:
         name: {dep.name for r in records.values() if r.name == name for dep in requirements(r.deps)}
         for name in sorted(names)
     }
+    # a package without a spec, e.g. added to the registry since its download, refreshes it once
+    # here, as the units run in an event loop, which cannot refresh it; external versions need none
+    specs = available_specs()
+    if any(name not in specs and active_version(records, name) is not None for name in deps):
+        update_registry()
     return run_async(run_units("upgrading", deps, upgrade_package, skip_dependents=False))
 
 

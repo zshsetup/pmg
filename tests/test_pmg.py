@@ -838,6 +838,32 @@ def test_upgrade_replaces_active_version(env: Env) -> None:
     assert "tool v2.0 is up to date" in env.pmg("upgrade", "tool").stderr
 
 
+def test_upgrade_gets_spec_added_to_registry(env: Env) -> None:
+    env.add_package("tool", version="1.0")
+    env.pmg("install", "tool")
+    # the spec is gone from the spec dir, and only the registry has it now
+    (env.specs / "tool.toml").unlink()
+    write_registry(env, "2.0")
+    result = env.pmg("upgrade", "tool")
+    assert "updated the specs" in result.stderr
+    assert "asyncio" not in result.stderr
+    assert env.installed()["tool@v2.0"] == "explicit active"
+    assert env.run_bin("tool") == "registry 2.0"
+
+
+def test_upgrade_reports_package_without_spec(env: Env) -> None:
+    env.add_package("tool", version="1.0")
+    env.pmg("install", "tool")
+    (env.specs / "tool.toml").unlink()
+    # a registry that refreshes fine, but has no spec for the package
+    write_registry(env, "1.0", name="other")
+    result = env.pmg("upgrade", "tool", ok=False)
+    assert "no spec for tool" in result.stderr
+    assert "not upgraded: tool" in result.stderr
+    assert "asyncio" not in result.stderr
+    assert "RuntimeWarning" not in result.stderr
+
+
 def test_upgrade_keeps_version_a_dependent_needs(env: Env) -> None:
     env.add_package("tool", version="1.0")
     env.add_package("app", deps=("tool<2",))
