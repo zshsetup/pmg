@@ -177,7 +177,9 @@ eval "$(pmg env)"
 - Spec commands on hosts without CA certificates get those pmg downloads with, in
   `CURL_CA_BUNDLE` and `SSL_CERT_FILE`.
 - `list` shows each installed version, whether it was installed directly or as a dependency, and
-  whether it is active.
+  whether it is active. `search` marks the installed ones. `--no-external` leaves out the versions
+  found outside pmg, e.g. of the system: `list` shows only what pmg installed, and `search` still
+  lists every package.
 - Set `PMG_GH_TOKEN` (or `GH_TOKEN`) to avoid the rate limit of the GitHub API.
 - pmg writes its zsh completion to `$XDG_DATA_HOME/zsh/site-functions/_pmg`, next to those of the
   packages, and `pmg completion` prints it. It completes commands, specs, and installed packages.

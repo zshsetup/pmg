@@ -781,6 +781,25 @@ def test_markers_in_deps(env: Env) -> None:
     assert set(env.installed()) == {"app@v1.0", "lib@v1.0"}
 
 
+def test_list_and_search_without_external(env: Env) -> None:
+    env.add_system_command("tool", "tool 3.1")
+    env.add_package("tool")
+    env.add_package("other")
+    # search needs the registry, whose spec is not installed
+    write_registry(env, "1.0", name="unrelated")
+    env.pmg("install", "tool", "other")
+    assert env.pmg("list", "--no-external").stdout.split() == ["other@v1.0", "explicit", "active"]
+    assert set(env.installed()) == {"tool@external", "other@v1.0"}
+
+    def marks(*args: str) -> dict[str, list[str]]:
+        lines = env.pmg("search", *args).stdout.splitlines()
+        return {line.split()[0]: line.split()[1:] for line in lines}
+
+    assert marks() == {"other": ["v1.0", "(active)"], "tool": ["external"], "unrelated": []}
+    # the package stays in the list, without the version outside pmg
+    assert marks("--no-external") == {"other": ["v1.0", "(active)"], "tool": [], "unrelated": []}
+
+
 def test_install_bang_is_no_external_for_one_package(env: Env) -> None:
     for name in ("tool", "other"):
         env.add_system_command(name, f"{name} 3.1")

@@ -215,17 +215,23 @@ def show(name: Annotated[str, doctyper.Argument(autocompletion=complete_availabl
         print(find_spec(name).read_text(), end="")  # noqa: T201
 
 
-def search(pattern: Annotated[str | None, doctyper.Argument()] = None) -> None:
+def search(
+    pattern: Annotated[str | None, doctyper.Argument()] = None,
+    no_external: Annotated[bool, doctyper.Option("--no-external")] = False,
+) -> None:
     """Lists the packages with a spec, marking the installed ones.
 
     Args:
         pattern: Part of the name, or a glob like "zs*" or "*-libs"; all packages if not given.
+        no_external: Do not mark the versions found outside pmg, e.g. of the system.
     """
     from pmg.core import search_specs
 
     with exit_on_error():
         tags: dict[str, list[str]] = {}
         for record in load_records().values():
+            if no_external and record.external:
+                continue
             tags.setdefault(record.name, []).append(
                 f"{record.tag} (active)" if record.active else record.tag
             )
@@ -233,10 +239,18 @@ def search(pattern: Annotated[str | None, doctyper.Argument()] = None) -> None:
         print_columns(rows)
 
 
-def list_installed() -> None:
-    """Lists the installed package versions, with the version of external ones."""
+def list_installed(
+    no_external: Annotated[bool, doctyper.Option("--no-external")] = False,
+) -> None:
+    """Lists the installed package versions, with the version of external ones.
+
+    Args:
+        no_external: Leave out the versions found outside pmg, e.g. of the system.
+    """
     rows = []
     for key, record in load_records().items():
+        if no_external and record.external:
+            continue
         # one column for both, as external versions are rarely active, which left a gap
         state = ["active"] if record.active else []
         if record.external:
