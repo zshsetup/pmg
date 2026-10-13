@@ -215,7 +215,9 @@ class Package(BaseStruct, kw_only=True):
     (any of its commands), {{ dir }}, or {{ dirs.<key> }}, so that no copy outside pmg passes it.
     """
     deps: list[str] = []
-    """Names of the packages this one needs, each optionally with a version specifier."""
+    """Names of the packages this one needs, each optionally with a version specifier.
+
+    A `!` after the name requires a version installed by pmg, not one found outside of it."""
     platforms: list[Platform] = []
     """Platforms the package is for, if not all; other hosts skip it as a dependency."""
     platform_deps: dict[Platform, list[str]] = {}

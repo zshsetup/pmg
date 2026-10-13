@@ -781,6 +781,45 @@ def test_markers_in_deps(env: Env) -> None:
     assert set(env.installed()) == {"app@v1.0", "lib@v1.0"}
 
 
+def test_own_dependency_ignores_external_version(env: Env) -> None:
+    env.add_system_command("lib", "lib 3.1")
+    env.add_package("lib")
+    env.add_package("plain", deps=("lib",))
+    env.add_package("strict", deps=("lib!",))
+    env.pmg("install", "plain")
+    assert env.installed() == {
+        "plain@v1.0": "explicit active",
+        "lib@external": "dependency external 3.1",
+    }
+    # the copy of the system does not count, a version of pmg comes in next to it
+    env.pmg("install", "strict")
+    assert env.installed() == {
+        "plain@v1.0": "explicit active",
+        "strict@v1.0": "explicit active",
+        "lib@external": "dependency external 3.1",
+        "lib@v1.0": "dependency active",
+    }
+
+
+def test_own_dependency_is_not_pulled_in_by_an_external_dependent(env: Env) -> None:
+    env.add_system_command("strict", "strict 1.0")
+    env.add_package("lib")
+    env.add_package("strict", deps=("lib!",))
+    env.pmg("install", "strict")
+    assert env.installed() == {"strict@external": "explicit external 1.0"}
+
+
+def test_own_dependency_with_specifier_and_marker(env: Env) -> None:
+    env.add_system_command("lib", "lib 3.1")
+    for version in ("1.0", "2.0"):
+        env.add_package("lib", version=version)
+    env.add_package("other")
+    deps = ("lib!>=2.0", "other!; sys_platform == 'none'", "lib!=1.5")
+    env.add_package("app", deps=deps)
+    env.pmg("install", "app")
+    assert set(env.installed()) == {"app@v1.0", "lib@v2.0"}
+
+
 @pytest.mark.parametrize("external", [False, True])
 def test_dependency_template_variables(env: Env, external: bool) -> None:
     if external:

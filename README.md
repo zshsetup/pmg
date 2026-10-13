@@ -108,7 +108,9 @@ macos_arm64 = "bat-{{ tag }}-aarch64-apple-darwin.tar.gz"
   keeps a value of the shell. Entries that render empty are left out.
 - `deps` entries can have environment markers like `"lib; sys_platform == 'linux'"`. In
   templates, `{{ deps["lib"].dir }}` and `{{ deps["lib"].version }}` are the package directory and
-  version of a dependency in use, the directory is empty for an external one.
+  version of a dependency in use, the directory is empty for an external one. A `!` after the
+  name, as in `"lib!"` or `"lib!>=1.2"`, requires a version installed by pmg, for packages that
+  use files of the dependency, which a copy of the system lacks.
 
 Packages share this layout:
 

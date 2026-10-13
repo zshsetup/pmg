@@ -39,7 +39,7 @@ from urllib.parse import quote, urlsplit
 # typing has override only from Python 3.12 on.
 from typing_extensions import override
 
-from pmg.packaging_utils import requirements, tag_version
+from pmg.packaging_utils import own_names, requirements, strip_own, tag_version
 
 if TYPE_CHECKING:
     import tarfile
@@ -1702,7 +1702,7 @@ def dependency_vars(
     from packaging.requirements import Requirement
 
     declared = [*pkg.deps, *(dep for deps in pkg.platform_deps.values() for dep in deps)]
-    variables = {Requirement(dep).name: {"dir": "", "version": ""} for dep in declared}
+    variables = {Requirement(strip_own(dep)).name: {"dir": "", "version": ""} for dep in declared}
     for dep in requirements(package_deps(pkg, host)):
         versions = [record for record in records.values() if record.name == dep.name]
         record = next((r for r in versions if r.active), None) or next(iter(versions), None)
@@ -1739,7 +1739,10 @@ def nothing_to_install(  # noqa: PLR0913, PLR0917
     if tag is not None:
         return False
     versions = refresh_external(name, pkg, versions)
-    if not explicit and any(satisfies(r.version_tag, specifier) for r in versions):
+    # versions found outside pmg only count if they are allowed
+    if not explicit and any(
+        satisfies(r.version_tag, specifier) for r in versions if external or not r.external
+    ):
         return True
     return external and use_external(name, pkg, versions, explicit, specifier, record_external)
 
@@ -1937,7 +1940,7 @@ def install_staged(  # noqa: PLR0913, PLR0917
         explicit=explicit,
         active=False,
         installed_at=time.time(),
-        deps=package_deps(pkg, host),
+        deps=[strip_own(dep) for dep in package_deps(pkg, host)],
         files=[str(dest) for _, dest in moves],
         dirs=[str(dest) for dest in dirs.values()],
     )
@@ -2161,7 +2164,7 @@ def install_packages(requested: dict[str, list[str | None]], external: bool) -> 
     order, specifiers = resolve_install_order(list(requested))
     # the checks for copies outside pmg run a command each, so they run together up front
     check_externals(order)
-    needed = needed_packages(requested, order, specifiers, external=external)
+    needed, own = needed_packages(requested, order, specifiers, external=external)
     deps = {name: dep_names(name) for name in order if name in needed}
 
     async def unit(name: str, deps: Deps) -> None:
@@ -2169,7 +2172,13 @@ def install_packages(requested: dict[str, list[str | None]], external: bool) -> 
             await install_package(name, explicit=True, tag=tag, external=external, deps=deps)
         # dependencies, or requested packages whose dependents need other versions
         if name not in requested or name in specifiers:
-            await install_package(name, explicit=False, specifier=specifiers.get(name), deps=deps)
+            await install_package(
+                name,
+                explicit=False,
+                specifier=specifiers.get(name),
+                external=name not in own,
+                deps=deps,
+            )
 
     return run_async(run_units("installing", deps, unit, skip_dependents=True))
 
@@ -2233,14 +2242,17 @@ def needed_packages(
     order: list[str],
     specifiers: dict[str, SpecifierSet],
     external: bool = True,
-) -> set[str]:
+) -> tuple[set[str], set[str]]:
     """Returns the requested packages and the dependencies of those that get installed.
 
-    Without `external`, versions found outside pmg do not count for the requested packages.
+    Without `external`, versions found outside pmg do not count for the requested packages. They
+    never count for the dependencies marked with `!` by a package that gets installed, which are
+    returned as the second set.
     """
     from packaging.specifiers import SpecifierSet
 
     needed = set(requested)
+    own: set[str] = set()
     # dependents come before their dependencies, so a package found outside pmg or not for the
     # host pulls in none of its dependencies
     for name in reversed(order):
@@ -2250,12 +2262,13 @@ def needed_packages(
             tags,
             name in requested,
             specifiers.get(name, SpecifierSet()),
-            external or name not in requested,
+            (external or name not in requested) and name not in own,
         ):
             spec = load_spec(name)
             deps = package_deps(spec, detect_platform(spec.min_glibc_version))
             needed |= {dep.name for dep in requirements(deps)}
-    return needed
+            own |= own_names(deps)
+    return needed, own
 
 
 def env_code() -> str:
