@@ -60,7 +60,8 @@ def install(
 
     Args:
         names: Names of the packages to install, each optionally with a release tag as name@tag,
-            or globs like "zst*" matching the names of specs, skipping those not for the host.
+            or globs like "zst*" matching the names of specs, skipping those not for the host. A
+            "!" after the name, as in "name!" or "name!@tag", is --no-external for that package.
         no_external: Install the packages even if a version outside pmg, e.g. of the system, is
             there; their dependencies may still be external.
     """
@@ -76,9 +77,21 @@ def install(
     )
 
     with exit_on_error():
+        marked: list[str] = []
+        args: list[str] = []
+        for arg in names:
+            name, at, tag = arg.partition("@")
+            if name.endswith("!"):
+                name = name.removesuffix("!")
+                marked.append(name)
+            args.append(f"{name}{at}{tag}")
+        names = args
+        marked_globs = [name for name in marked if is_glob(name)]
+        marked_matches: list[str] = []
         if globs := [arg for arg in names if is_glob(arg)]:
             ensure_registry()
             matches = expand_globs(globs, available_specs())
+            marked_matches = expand_globs(marked_globs, available_specs())
             skipped = [name for name in matches if not is_for_host(load_spec(name))]
             if skipped:
                 logger.info("skipped %s, not for this host", ", ".join(skipped))
@@ -91,7 +104,8 @@ def install(
         for arg in names:
             name, _, tag = arg.partition("@")
             requested.setdefault(name, []).append(tag or None)
-        if failed := install_packages(requested, external=not no_external):
+        own = frozenset(name for name in requested if name in marked) | frozenset(marked_matches)
+        if failed := install_packages(requested, external=not no_external, no_external=own):
             raise PmgError(f"not installed: {', '.join(failed)}")
 
 

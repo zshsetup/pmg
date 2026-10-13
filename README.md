@@ -155,7 +155,8 @@ eval "$(pmg env)"
   The plain names of the commands in `~/.local/bin`, and of the man pages and completions, link to
   the active version: the latest install, or a given tag if no other version is active. `use`
   switches the active version.
-- `install` also installs the dependencies, listed in `deps` with optional version specifiers like
+- `install name!` (or `name!@tag`, or a glob like `"zst*!"`) is `--no-external` for that package.
+  `install` also installs the dependencies, listed in `deps` with optional version specifiers like
   `"lib>=1.2,<2"`. An installed version that meets them is enough, otherwise the latest release is
   installed. The version of a tag is its first number, e.g. `1.27.1` in `go1.27.1`.
 - `uninstall` removes all versions of a package, or one given as `name@tag`. It refuses if a

@@ -2149,7 +2149,11 @@ async def run_units(
     return [name for name in deps if name in failed]
 
 
-def install_packages(requested: dict[str, list[str | None]], external: bool) -> list[str]:
+def install_packages(
+    requested: dict[str, list[str | None]],
+    external: bool,
+    no_external: frozenset[str] = frozenset(),
+) -> list[str]:
     """Installs the requested packages and the dependencies they need, see `install_package`.
 
     A package that fails skips only itself and its dependents.
@@ -2157,6 +2161,7 @@ def install_packages(requested: dict[str, list[str | None]], external: bool) -> 
     Args:
         requested: Requested tags by package, None for the latest one.
         external: Whether a version found outside pmg is enough for the requested packages.
+        no_external: Requested packages for which it is not, whatever `external` says.
 
     Returns:
         The packages that failed or were skipped.
@@ -2164,12 +2169,20 @@ def install_packages(requested: dict[str, list[str | None]], external: bool) -> 
     order, specifiers = resolve_install_order(list(requested))
     # the checks for copies outside pmg run a command each, so they run together up front
     check_externals(order)
-    needed, own = needed_packages(requested, order, specifiers, external=external)
+    needed, own = needed_packages(
+        requested, order, specifiers, external=external, no_external=no_external
+    )
     deps = {name: dep_names(name) for name in order if name in needed}
 
     async def unit(name: str, deps: Deps) -> None:
         for tag in requested.get(name, []):
-            await install_package(name, explicit=True, tag=tag, external=external, deps=deps)
+            await install_package(
+                name,
+                explicit=True,
+                tag=tag,
+                external=external and name not in no_external,
+                deps=deps,
+            )
         # dependencies, or requested packages whose dependents need other versions
         if name not in requested or name in specifiers:
             await install_package(
@@ -2242,10 +2255,12 @@ def needed_packages(
     order: list[str],
     specifiers: dict[str, SpecifierSet],
     external: bool = True,
+    no_external: frozenset[str] = frozenset(),
 ) -> tuple[set[str], set[str]]:
     """Returns the requested packages and the dependencies of those that get installed.
 
-    Without `external`, versions found outside pmg do not count for the requested packages. They
+    Without `external`, versions found outside pmg do not count for the requested packages, nor
+    for those in `no_external`. They
     never count for the dependencies marked with `!` by a package that gets installed, which are
     returned as the second set.
     """
@@ -2262,7 +2277,7 @@ def needed_packages(
             tags,
             name in requested,
             specifiers.get(name, SpecifierSet()),
-            (external or name not in requested) and name not in own,
+            ((external and name not in no_external) or name not in requested) and name not in own,
         ):
             spec = load_spec(name)
             deps = package_deps(spec, detect_platform(spec.min_glibc_version))

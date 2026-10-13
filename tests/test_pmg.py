@@ -781,6 +781,27 @@ def test_markers_in_deps(env: Env) -> None:
     assert set(env.installed()) == {"app@v1.0", "lib@v1.0"}
 
 
+def test_install_bang_is_no_external_for_one_package(env: Env) -> None:
+    for name in ("tool", "other"):
+        env.add_system_command(name, f"{name} 3.1")
+        env.add_package(name)
+    env.pmg("install", "tool!", "other")
+    assert env.installed() == {
+        "tool@v1.0": "explicit active",
+        "other@external": "explicit external 3.1",
+    }
+
+
+def test_install_bang_with_tag_and_glob(env: Env) -> None:
+    for name in ("tool", "toolkit"):
+        env.add_system_command(name, f"{name} 3.1")
+        env.add_package(name)
+    # globs need the registry, whose specs are not the ones of the globs
+    write_registry(env, "1.0", name="unrelated")
+    env.pmg("install", "tool!@v1.0", "toolk*!")
+    assert env.installed() == {"tool@v1.0": "explicit active", "toolkit@v1.0": "explicit active"}
+
+
 def test_own_dependency_ignores_external_version(env: Env) -> None:
     env.add_system_command("lib", "lib 3.1")
     env.add_package("lib")
