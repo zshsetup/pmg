@@ -11,10 +11,21 @@ works without admin rights.
 ## Installation
 
 ```bash
-uv tool install git+https://github.com/zshsetup/pmg
+curl -fsSL https://github.com/zshsetup/pmg/raw/refs/heads/main/install.sh | sh
 ```
 
-Or run it without installing, with `uvx --from git+https://github.com/zshsetup/pmg pmg`.
+The installer downloads a pinned uv if none is in `PATH`, installs the latest tag of pmg into its own
+venv, and links a launcher to `~/.local/bin/pmg`. `pmg self-upgrade` installs the latest tag again.
+Set `GH_TOKEN` (or `PMG_GH_TOKEN`) to avoid the API rate limit of GitHub.
+
+- `PMG_VENV_DIR`: the venv of pmg, `~/.cache/pmg/venv` by default.
+- `PMG_UV_DIR`: where uv is downloaded, `~/.cache/pmg/uv` by default.
+- `PMG_TAG`: a tag to install instead of the latest.
+- `PMG_SOURCE`: a local checkout to install editable instead of a tag.
+- `XDG_BIN_HOME`: where the launcher goes, `~/.local/bin` by default.
+
+Or install it with `uv tool install git+https://github.com/zshsetup/pmg`, or run it without
+installing, with `uvx --from git+https://github.com/zshsetup/pmg pmg`.
 
 ## Usage
 
